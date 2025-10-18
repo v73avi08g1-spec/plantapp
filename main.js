@@ -1,6 +1,6 @@
 // ==================== 設定 ====================
 const CLIENT_ID = "616108077164-13ta54cr62nklvambt4ln1of6sfps5sm.apps.googleusercontent.com";
-const API_KEY = "AIzaSyDQ8UIFpAIfWR3pWO1WiZzzLT_y8o9pY8s";
+const API_KEY = "AIzaSyDQ8UIFpAIfWR3pWO1WiZzzLT_yo9pY8s";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 let tokenClient;
@@ -13,7 +13,7 @@ let currentCommandData = null;
 let lastStateForNotify = ""; // 通知用に直近のstateを記憶
 
 // ==== Web Push 追加設定 ====
-const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg"; // ← 手順で作成した公開鍵(base64url)
+const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg";
 const SW_PATH = "sw.js";
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - b64.length % 4) % 4);
@@ -318,10 +318,13 @@ async function enableNotify() {
   }
 }
 
-// ==================== 最新表示・履歴（既存＋α） ====================
+// ==================== 最新表示・履歴 ====================
 async function loadLatestStatus() {
   if (!currentProjectSettings) return;
-  document.getElementById("reloadStatus").innerText = "読み込み中...";
+  const statusEl = document.getElementById("reloadStatus");
+  statusEl.innerText = "読み込み中...";
+  const errEl = document.getElementById("errorDisplay");
+  errEl.textContent = "";
   try {
     // 最新画像
     const picRes = await gapi.client.drive.files.list({
@@ -335,6 +338,9 @@ async function loadLatestStatus() {
       document.getElementById("latestImage").src = `https://drive.google.com/uc?export=view&id=${fileId}`;
       document.getElementById("latestImageTime").innerText =
         `画像時刻: ${new Date(picRes.result.files[0].createdTime).toLocaleString()}`;
+    } else {
+      document.getElementById("latestImage").src = "";
+      document.getElementById("latestImageTime").innerText = "画像なし";
     }
 
     // 環境データ（最新1件）
@@ -344,18 +350,23 @@ async function loadLatestStatus() {
       pageSize: 1,
       fields: "files(id, name, createdTime)"
     });
+
     if (dataRes.result.files.length > 0) {
       const fileId = dataRes.result.files[0].id;
       const fileContent = await gapi.client.drive.files.get({ fileId: fileId, alt: "media" });
       document.getElementById("latestEnv").innerText =
         `${new Date(dataRes.result.files[0].createdTime).toLocaleString()} 時点\n` +
         JSON.stringify(fileContent.result, null, 2);
+    } else {
+      document.getElementById("latestEnv").innerText = "環境JSONが見つかりません（撮影/計測が未実行の可能性）";
     }
+
     await loadStatus();
-    document.getElementById("reloadStatus").innerText = "完了";
+    statusEl.innerText = "完了";
   } catch (err) {
     showError("最新状態取得", err);
-    document.getElementById("reloadStatus").innerText = "失敗";
+    statusEl.innerText = "失敗";
+    errEl.textContent = "Drive上にデータが無い / JSON構造が不正 / 権限切れ 等の可能性";
   }
 }
 
@@ -418,6 +429,27 @@ function downloadHistory() {
   doc.save(`history_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
+// ---- command.json を Drive から再取得して表示 ----
+async function refreshCommandViewer() {
+  if (!currentProjectId) return alert("プロジェクト未選択です");
+  try {
+    if (!commandFileId) await loadCommandFile(); // まだなら取得
+    if (!commandFileId) return alert("command.json が見つかりません");
+
+    const res = await gapi.client.drive.files.get({ fileId: commandFileId, alt: "media" });
+    currentCommandData = res.result || {};
+
+    const pre = document.getElementById("commandViewer");
+    pre.textContent = JSON.stringify(currentCommandData, null, 2);
+
+    const st = document.getElementById("commandStatus");
+    st.textContent = "更新しました";
+    setTimeout(() => (st.textContent = ""), 2000);
+  } catch (err) {
+    showError("command.json の読み込み", err);
+  }
+}
+
 // ==================== プロジェクト画面 ====================
 async function openProject(fileId) {
   currentProjectId = fileId;
@@ -474,33 +506,18 @@ async function openProject(fileId) {
   document.getElementById("downloadHistoryBtn").onclick = downloadHistory;
   document.getElementById("enableNotifyBtn").onclick = enableNotify;
 
+  const cmdBtn = document.getElementById("cmdRefreshBtn");
+  if (cmdBtn) cmdBtn.onclick = refreshCommandViewer;
+  // 初回も表示
+  refreshCommandViewer();
+
   await loadLatestStatus();
 
   // ステータスの自動更新（60秒ごと）
   setInterval(loadStatus, 60000);
 }
 
-// ==================== ログイン～TOP ====================
-async function handleLogin(retry = false) {
-  document.getElementById("status").innerText = retry ? "再試行中..." : "ログイン中...";
-  document.getElementById("loading").classList.remove("hidden");
-  try {
-    await initGapi();
-    const token = await gisLogin();
-    gapi.client.setToken({ access_token: token });
-    await createPlantAppFolder();
-    document.getElementById("loginScreen").classList.add("hidden");
-    document.getElementById("homeScreen").classList.remove("hidden");
-    await loadProjects();
-  } catch (err) {
-    showError("ログイン処理", err);
-    if (!retry) setTimeout(() => handleLogin(true), 1200);
-  } finally {
-    document.getElementById("loading").classList.add("hidden");
-  }
-}
-
-// ==================== アカウント/プロジェクト管理（既存） ====================
+// ==================== アカウント/プロジェクト管理 ====================
 async function deleteAccount() {
   if (!plantAppFolderId) return alert("PlantAppフォルダが見つかりません。");
   if (!confirm("⚠️ アカウントデータをすべて削除します。本当に実行しますか？")) return;
