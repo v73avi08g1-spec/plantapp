@@ -1,6 +1,6 @@
 // ==================== 設定 ====================
 const CLIENT_ID = "616108077164-13ta54cr62nklvambt4ln1of6sfps5sm.apps.googleusercontent.com";
-const API_KEY = "AIzaSyDQ8UIFpAIfWR3pWO1WiZzzLT_yo9pY8s";
+const API_KEY = "AIzaSyDQ8UIFpAIfWR3pWO1WiZzzLT_y8o9pY8s";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 let tokenClient;
@@ -13,11 +13,11 @@ let currentCommandData = null;
 let lastStateForNotify = ""; // 通知用に直近のstateを記憶
 
 // ==== Web Push 追加設定 ====
-const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg";
+const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg"; // ← 作成した公開鍵(base64url)
 const SW_PATH = "sw.js";
 function urlBase64ToUint8Array(b64) {
-  const pad = '='.repeat((4 - b64.length % 4) % 4);
-  const base64 = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const base64 = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
   const raw = atob(base64);
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
@@ -129,9 +129,11 @@ async function loadProjects() {
     const row = document.createElement("div");
     row.innerHTML = `
       <span>${displayName}</span>
-      <button onclick="openProject('${file.id}')">開く</button>
-      <button onclick="renameProject('${file.id}', '${file.name}')">名前変更</button>
-      <button onclick="deleteProject('${file.id}')">削除</button>
+      <div>
+        <button onclick="openProject('${file.id}')">開く</button>
+        <button onclick="renameProject('${file.id}', '${file.name}')">名前変更</button>
+        <button onclick="deleteProject('${file.id}')">削除</button>
+      </div>
     `;
     listDiv.appendChild(row);
   });
@@ -285,6 +287,32 @@ async function loadStatus() {
   }
 }
 
+// --- command.json 表示（閲覧） ---
+async function showCommandJson() {
+  const pre = document.getElementById("commandJsonPre");
+  if (!currentCommandData) {
+    pre.textContent = "command.json 未読込";
+    return;
+  }
+  pre.textContent = JSON.stringify(currentCommandData, null, 2);
+  document.getElementById("commandPanel").classList.remove("hidden");
+}
+async function refreshCommandJson() {
+  if (!currentProjectId) return;
+  const res = await gapi.client.drive.files.list({
+    q: `'${currentProjectId}' in parents and name='command.json' and trashed=false`,
+    fields: "files(id)"
+  });
+  if (!res.result.files.length) {
+    alert("command.json が見つかりません"); return;
+  }
+  commandFileId = res.result.files[0].id;
+  const fileContent = await gapi.client.drive.files.get({ fileId: commandFileId, alt: "media" });
+  currentCommandData = fileContent.result;
+  showCommandJson();
+}
+
+// --- Web Push 許可＆購読保存 ---
 async function enableNotify() {
   try {
     if (!currentProjectId) return alert("プロジェクトを開いてから許可してください");
@@ -292,7 +320,7 @@ async function enableNotify() {
     // iOSはPWAのみ受信可（ホーム画面に追加が必要）
     const ua = navigator.userAgent || "";
     const isiOS = /iPad|iPhone|iPod/.test(ua);
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
     if (isiOS && !isStandalone) {
       alert("iOSはPWAのみ受信可です。共有メニュー→『ホーム画面に追加』して起動してください。");
     }
@@ -321,10 +349,7 @@ async function enableNotify() {
 // ==================== 最新表示・履歴 ====================
 async function loadLatestStatus() {
   if (!currentProjectSettings) return;
-  const statusEl = document.getElementById("reloadStatus");
-  statusEl.innerText = "読み込み中...";
-  const errEl = document.getElementById("errorDisplay");
-  errEl.textContent = "";
+  document.getElementById("reloadStatus").innerText = "読み込み中...";
   try {
     // 最新画像
     const picRes = await gapi.client.drive.files.list({
@@ -338,9 +363,6 @@ async function loadLatestStatus() {
       document.getElementById("latestImage").src = `https://drive.google.com/uc?export=view&id=${fileId}`;
       document.getElementById("latestImageTime").innerText =
         `画像時刻: ${new Date(picRes.result.files[0].createdTime).toLocaleString()}`;
-    } else {
-      document.getElementById("latestImage").src = "";
-      document.getElementById("latestImageTime").innerText = "画像なし";
     }
 
     // 環境データ（最新1件）
@@ -350,23 +372,18 @@ async function loadLatestStatus() {
       pageSize: 1,
       fields: "files(id, name, createdTime)"
     });
-
     if (dataRes.result.files.length > 0) {
       const fileId = dataRes.result.files[0].id;
       const fileContent = await gapi.client.drive.files.get({ fileId: fileId, alt: "media" });
       document.getElementById("latestEnv").innerText =
         `${new Date(dataRes.result.files[0].createdTime).toLocaleString()} 時点\n` +
         JSON.stringify(fileContent.result, null, 2);
-    } else {
-      document.getElementById("latestEnv").innerText = "環境JSONが見つかりません（撮影/計測が未実行の可能性）";
     }
-
     await loadStatus();
-    statusEl.innerText = "完了";
+    document.getElementById("reloadStatus").innerText = "完了";
   } catch (err) {
     showError("最新状態取得", err);
-    statusEl.innerText = "失敗";
-    errEl.textContent = "Drive上にデータが無い / JSON構造が不正 / 権限切れ 等の可能性";
+    document.getElementById("reloadStatus").innerText = "失敗";
   }
 }
 
@@ -429,27 +446,6 @@ function downloadHistory() {
   doc.save(`history_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-// ---- command.json を Drive から再取得して表示 ----
-async function refreshCommandViewer() {
-  if (!currentProjectId) return alert("プロジェクト未選択です");
-  try {
-    if (!commandFileId) await loadCommandFile(); // まだなら取得
-    if (!commandFileId) return alert("command.json が見つかりません");
-
-    const res = await gapi.client.drive.files.get({ fileId: commandFileId, alt: "media" });
-    currentCommandData = res.result || {};
-
-    const pre = document.getElementById("commandViewer");
-    pre.textContent = JSON.stringify(currentCommandData, null, 2);
-
-    const st = document.getElementById("commandStatus");
-    st.textContent = "更新しました";
-    setTimeout(() => (st.textContent = ""), 2000);
-  } catch (err) {
-    showError("command.json の読み込み", err);
-  }
-}
-
 // ==================== プロジェクト画面 ====================
 async function openProject(fileId) {
   currentProjectId = fileId;
@@ -506,15 +502,37 @@ async function openProject(fileId) {
   document.getElementById("downloadHistoryBtn").onclick = downloadHistory;
   document.getElementById("enableNotifyBtn").onclick = enableNotify;
 
-  const cmdBtn = document.getElementById("cmdRefreshBtn");
-  if (cmdBtn) cmdBtn.onclick = refreshCommandViewer;
-  // 初回も表示
-  refreshCommandViewer();
+  // command.json 表示系
+  document.getElementById("showCommandBtn").onclick = showCommandJson;
+  document.getElementById("refreshCommandBtn").onclick = refreshCommandJson;
+  document.getElementById("closeCommandBtn").onclick = () => {
+    document.getElementById("commandPanel").classList.add("hidden");
+  };
 
   await loadLatestStatus();
 
   // ステータスの自動更新（60秒ごと）
   setInterval(loadStatus, 60000);
+}
+
+// ==================== ログイン～TOP ====================
+async function handleLogin(retry = false) {
+  document.getElementById("status").innerText = retry ? "再試行中..." : "ログイン中...";
+  document.getElementById("loading").classList.remove("hidden");
+  try {
+    await initGapi();
+    const token = await gisLogin();
+    gapi.client.setToken({ access_token: token });
+    await createPlantAppFolder();
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("homeScreen").classList.remove("hidden");
+    await loadProjects();
+  } catch (err) {
+    showError("ログイン処理", err);
+    if (!retry) setTimeout(() => handleLogin(true), 1200);
+  } finally {
+    document.getElementById("loading").classList.add("hidden");
+  }
 }
 
 // ==================== アカウント/プロジェクト管理 ====================
@@ -605,8 +623,11 @@ window.onload = () => {
   bindBtn("downloadHistoryBtn", downloadHistory);
 };
 
-// グローバル
+// ====== 重要：グローバル公開（ReferenceError対策） ======
+window.handleLogin = handleLogin;
 window.addSchedule = addSchedule;
 window.loadLatestStatus = loadLatestStatus;
 window.loadHistory = loadHistory;
 window.downloadHistory = downloadHistory;
+window.showCommandJson = showCommandJson;
+window.refreshCommandJson = refreshCommandJson;
