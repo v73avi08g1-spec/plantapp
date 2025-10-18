@@ -10,10 +10,10 @@ let currentProjectSettings = null;
 let commandFileId = null;
 let currentCommandData = null;
 
-let lastStateForNotify = ""; // ブラウザ内ローカル通知用
+let lastStateForNotify = ""; // 通知用に直近のstateを記憶
 
-// ==== Web Push ====
-const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg";
+// ==== Web Push 追加設定 ====
+const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg"; // ← 手順で作成した公開鍵(base64url)
 const SW_PATH = "sw.js";
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - b64.length % 4) % 4);
@@ -141,6 +141,7 @@ async function createProject() {
   const name = prompt("新しいプロジェクト名を入力してください:");
   if (!name || name.trim() === "") return;
 
+  // 一意ID
   const idPart = Math.floor(1000000000 + Math.random() * 9000000000).toString();
   const displayName = name.trim();
   const fullName = `project_${idPart}_${displayName}`;
@@ -165,6 +166,7 @@ async function createProject() {
     subFolderIds[sub] = sf.result.id;
   }
 
+  // ★ growthAuto に preNoticeMin / padSec を追加（デフォルト: 5分, 60秒）
   const settingsContent = {
     id: idPart,
     name: displayName,
@@ -178,12 +180,11 @@ async function createProject() {
   };
   await uploadJsonToDrive("project_settings.json", settingsContent, projectFolderId);
 
-  // ★ 事前通知分＆パッド秒を追加
   const initialCommands = {
-    growthAuto: { enabled: false, interval: 10, schedules: [], runNow: false, preNoticeMin: 5, padAfterNoticeSec: 60 },
+    growthAuto: { enabled: false, interval: 10, schedules: [], runNow: false, preNoticeMin: 5, padSec: 60 },
     bmeAuto:    { enabled: false, interval: 10, schedules: [], runNow: false },
     waterAuto:  { enabled: false, interval: 10, schedules: [], runNow: false },
-    lightAuto:  { enabled: false, interval: 1,  schedules: [], runNow: false } // 日照度は1分をデフォルトに
+    lightAuto:  { enabled: false, interval: 10, schedules: [], runNow: false }
   };
   await uploadJsonToDrive("command.json", initialCommands, projectFolderId);
 
@@ -200,10 +201,6 @@ async function loadCommandFile() {
     commandFileId = res.result.files[0].id;
     const fileContent = await gapi.client.drive.files.get({ fileId: commandFileId, alt: "media" });
     currentCommandData = fileContent.result;
-    // フィールドが無い古いcommand.jsonの互換
-    currentCommandData.growthAuto = currentCommandData.growthAuto || {};
-    if (typeof currentCommandData.growthAuto.preNoticeMin !== "number") currentCommandData.growthAuto.preNoticeMin = 5;
-    if (typeof currentCommandData.growthAuto.padAfterNoticeSec !== "number") currentCommandData.growthAuto.padAfterNoticeSec = 60;
   }
 }
 
@@ -246,11 +243,12 @@ async function runNow(key) {
 async function runPairNow() {
   if (!currentCommandData || !commandFileId) return;
   currentCommandData["growthAuto"].runNow = true;
+  currentCommandData["lightAuto"].runNow = true;
   await updateJsonOnDrive(commandFileId, currentCommandData);
-  alert("成長計測（撮影）を送信しました");
+  alert("ペア撮影（画像＋日照・環境）を送信しました");
 }
 
-// ==================== ステータス表示/履歴 ====================
+// ==================== ステータス表示 ====================
 async function loadStatus() {
   if (!currentProjectId) return;
   try {
@@ -273,7 +271,7 @@ async function loadStatus() {
     document.getElementById("piLast").innerText = st.last_schedule_tag || st.last_pair_id || "—";
     document.getElementById("piMsg").innerText = st.message || "—";
 
-    // ブラウザ内の簡易通知（PWAのWeb Pushとは別物）
+    // 簡易（ローカル）通知：ブラウザ内だけのNotification
     if (("Notification" in window) && Notification.permission === "granted") {
       if (st.state && st.state !== lastStateForNotify) {
         const body = st.state === "paused_overheat"
@@ -292,6 +290,7 @@ async function enableNotify() {
   try {
     if (!currentProjectId) return alert("プロジェクトを開いてから許可してください");
 
+    // iOSはPWAのみ受信可（ホーム画面に追加が必要）
     const ua = navigator.userAgent || "";
     const isiOS = /iPad|iPhone|iPod/.test(ua);
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -320,12 +319,12 @@ async function enableNotify() {
   }
 }
 
-// 最新と履歴（既存）
+// ==================== 最新表示・履歴（既存＋α） ====================
 async function loadLatestStatus() {
   if (!currentProjectSettings) return;
   document.getElementById("reloadStatus").innerText = "読み込み中...";
   try {
-    // 画像（最新1件）
+    // 最新画像
     const picRes = await gapi.client.drive.files.list({
       q: `'${currentProjectSettings.subFolderIds.picture}' in parents and trashed=false`,
       orderBy: "createdTime desc",
@@ -455,21 +454,26 @@ async function openProject(fileId) {
     };
 
     const intEl = document.getElementById(interval);
-    intEl.value = currentCommandData[key]?.interval ?? 10;
+    intEl.value = currentCommandData[key]?.interval || 10;
     intEl.onchange = () => updateCommand(key, "interval", parseInt(intEl.value, 10));
 
     document.getElementById(nowBtn).onclick = () => runNow(key);
   });
 
-  // ★ 成長計測：事前通知分・パッド秒
+  // ★ 追加: 事前通知と撮影パッドの入力 → command.json へ反映（growthAuto 配下）
   const preEl = document.getElementById("growthPreNoticeMin");
   const padEl = document.getElementById("growthPadSec");
-  preEl.value = currentCommandData.growthAuto?.preNoticeMin ?? 5;
-  padEl.value = currentCommandData.growthAuto?.padAfterNoticeSec ?? 60;
-  preEl.onchange = () => updateCommand("growthAuto", "preNoticeMin", parseInt(preEl.value, 10));
-  padEl.onchange = () => updateCommand("growthAuto", "padAfterNoticeSec", parseInt(padEl.value, 10));
+  if (preEl) {
+    preEl.value = (currentCommandData?.growthAuto?.preNoticeMin ?? 5);
+    preEl.onchange = () => updateCommand("growthAuto", "preNoticeMin", Math.max(0, parseInt(preEl.value || "0", 10)));
+  }
+  if (padEl) {
+    padEl.value = (currentCommandData?.growthAuto?.padSec ?? 60);
+    padEl.onchange = () => updateCommand("growthAuto", "padSec", Math.max(0, parseInt(padEl.value || "0", 10)));
+  }
 
-  document.getElementById("pairNowBtn").onclick = runPairNow;
+  const pairBtn = document.getElementById("pairNowBtn");
+  if (pairBtn) pairBtn.onclick = runPairNow;
 
   document.getElementById("growthBtn").onclick = () => {
     document.getElementById("growthMenu").classList.toggle("hidden");
@@ -483,13 +487,70 @@ async function openProject(fileId) {
   document.getElementById("downloadHistoryBtn").onclick = downloadHistory;
   document.getElementById("enableNotifyBtn").onclick = enableNotify;
 
+  // ★ 追加: command.json の閲覧＆再読込
+  const cmdPanel = document.getElementById("commandPanel");
+  const cmdPre   = document.getElementById("commandJsonPre");
+  const btnShow  = document.getElementById("showCommandBtn");
+  const btnClose = document.getElementById("closeCommandBtn");
+  const btnRef   = document.getElementById("refreshCommandBtn");
+
+  if (btnShow && cmdPanel && cmdPre) {
+    btnShow.onclick = async () => {
+      if (!commandFileId) await loadCommandFile();
+      if (!commandFileId) return alert("command.json が見つかりません");
+      const fileContent = await gapi.client.drive.files.get({ fileId: commandFileId, alt: "media" });
+      cmdPre.textContent = JSON.stringify(fileContent.result || {}, null, 2);
+      cmdPanel.classList.remove("hidden");
+    };
+  }
+  if (btnRef && cmdPanel && cmdPre) {
+    btnRef.onclick = async () => {
+      await loadCommandFile();
+      if (!currentCommandData) return alert("command.json が読み込めませんでした");
+      cmdPre.textContent = JSON.stringify(currentCommandData, null, 2);
+      // ついでに UI の値も最新化
+      mapping.forEach(({ key, btn, interval }) => {
+        const btnEl = document.getElementById(btn);
+        if (btnEl) btnEl.textContent = currentCommandData[key]?.enabled ? "ON" : "OFF";
+        const intEl = document.getElementById(interval);
+        if (intEl) intEl.value = currentCommandData[key]?.interval || 10;
+      });
+      if (preEl) preEl.value = (currentCommandData?.growthAuto?.preNoticeMin ?? 5);
+      if (padEl) padEl.value = (currentCommandData?.growthAuto?.padSec ?? 60);
+      alert("command.json を再読込しました");
+    };
+  }
+  if (btnClose && cmdPanel) {
+    btnClose.onclick = () => cmdPanel.classList.add("hidden");
+  }
+
   await loadLatestStatus();
 
-  // ステータス自動更新（60秒ごと）
+  // ステータスの自動更新（60秒ごと）
   setInterval(loadStatus, 60000);
 }
 
-// ==================== アカウント/プロジェクト管理 ====================
+// ==================== ログイン～TOP ====================
+async function handleLogin(retry = false) {
+  document.getElementById("status").innerText = retry ? "再試行中..." : "ログイン中...";
+  document.getElementById("loading").classList.remove("hidden");
+  try {
+    await initGapi();
+    const token = await gisLogin();
+    gapi.client.setToken({ access_token: token });
+    await createPlantAppFolder();
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("homeScreen").classList.remove("hidden");
+    await loadProjects();
+  } catch (err) {
+    showError("ログイン処理", err);
+    if (!retry) setTimeout(() => handleLogin(true), 1200);
+  } finally {
+    document.getElementById("loading").classList.add("hidden");
+  }
+}
+
+// ==================== アカウント/プロジェクト管理（既存） ====================
 async function deleteAccount() {
   if (!plantAppFolderId) return alert("PlantAppフォルダが見つかりません。");
   if (!confirm("⚠️ アカウントデータをすべて削除します。本当に実行しますか？")) return;
