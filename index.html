@@ -82,6 +82,20 @@
       <button id="growthNowBtn" data-disabled="false">今すぐ撮影</button>
       <button id="pairNowBtn" data-disabled="false">ペア撮影（画像＋日照・環境）</button>
       <button onclick="addSchedule('growthAuto')" data-disabled="false">時間指定追加</button>
+
+      <!-- ★ 追加：事前通知（分）＆ 撮影パッド（秒） -->
+      <div style="margin-top:10px;">
+        <label>事前通知（分）:
+          <input type="number" id="growthPreNoticeMin" min="0" max="120" value="5">
+        </label>
+        <label style="margin-left:10px;">撮影パッド（秒）:
+          <input type="number" id="growthPadSec" min="0" max="300" value="60">
+        </label>
+        <div class="note" style="margin-top:4px;">
+          例）事前通知=7分、パッド=30秒 → 通知から7分＋30秒後に撮影します
+        </div>
+      </div>
+
       <div id="growthAutoScheduleList"></div>
     </div>
 
