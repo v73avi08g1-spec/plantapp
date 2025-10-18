@@ -70,7 +70,7 @@
       <div id="growthAutoScheduleList"></div>
     </div>
 
-    <!-- 環境計測メニュー（既存） -->
+    <!-- 環境計測メニュー -->
     <button id="envBtn" data-disabled="false">環境計測</button>
     <div id="envMenu" class="hidden">
       <div class="sensor-block">
@@ -101,6 +101,14 @@
         <div id="lightAutoScheduleList"></div>
       </div>
     </div>
+
+    <!-- command.json 閲覧 -->
+    <h2>command.json（閲覧）</h2>
+    <button id="cmdRefreshBtn" data-disabled="false">表示 / 更新</button>
+    <span id="commandStatus" style="color:green; margin-left:5px;"></span>
+    <pre id="commandViewer" style="max-height:260px; overflow:auto; background:#fafafa; border:1px solid #ddd; padding:8px; border-radius:6px;">
+（未表示）
+    </pre>
 
     <h2>成長記録（履歴）</h2>
     <button id="recordBtn" data-disabled="false">履歴を読み込む</button>
