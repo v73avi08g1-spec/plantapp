@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#4caf50">
+  <link rel="manifest" href="manifest.json">
+  <title>PlantApp</title>
+  <link rel="stylesheet" href="style.css" />
+  <script data-cfasync="false" src="https://apis.google.com/js/api.js"></script>
+  <script data-cfasync="false" src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+</head>
+
+<body>
+  <!-- ログイン -->
+  <div id="loginScreen">
+    <h1>PlantApp</h1>
+    <p id="status">ログインしてください</p>
+    <button id="loginBtn" data-disabled="false">Googleでログイン</button>
+  </div>
+
+  <!-- ホーム -->
+  <div id="homeScreen" class="hidden">
+    <h1>PlantApp ホーム</h1>
+    <button id="createProjectBtn" data-disabled="false">新規プロジェクト作成</button>
+    <button id="deleteAccountBtn" data-disabled="false">アカウント削除</button>
+    <div id="projectList"></div>
+  </div>
+
+  <!-- プロジェクト -->
+  <div id="projectScreen" class="hidden">
+    <h1>プロジェクト操作</h1>
+
+    <h2>現在の様子</h2>
+    <div style="display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+      <div>
+        <img id="latestImage" src="" alt="現在の様子" width="150" />
+        <div id="latestImageTime">（時刻不明）</div>
+        <button id="reloadEnvBtn" data-disabled="false">再読み込み</button>
+        <span id="reloadStatus" style="color:green; margin-left:5px;"></span>
+      </div>
+      <div style="min-width:260px; max-width:420px;">
+        <div id="statusPanel" class="submenu">
+          <h3 style="margin-top:0;">ラズパイ状態</h3>
+          <div>状態: <span id="piState">—</span></div>
+          <div>CPU温度: <span id="piTemp">—</span> ℃</div>
+          <div>最終実行: <span id="piLast">—</span></div>
+          <div>メッセージ: <span id="piMsg">—</span></div>
+          <div style="margin-top:6px;">
+            <button id="enableNotifyBtn">通知を許可</button>
+          </div>
+        </div>
+        <pre id="latestEnv" style="max-height:200px; overflow:auto;">環境データ読み込み中...</pre>
+        <div id="errorDisplay" style="color:red; margin-top:5px;"></div>
+      </div>
+    </div>
+
+    <!-- 成長計測メニュー -->
+    <button id="growthBtn" data-disabled="false">成長計測（撮影）</button>
+    <div id="growthMenu" class="hidden">
+      <button id="growthAutoBtn" data-disabled="false">OFF</button>
+      <span>定期撮影</span>
+      <br>
+      <input type="number" id="growthAutoInterval" min="1" value="10"> 分ごと
+      <button id="growthNowBtn" data-disabled="false">今すぐ撮影</button>
+      <button id="pairNowBtn" data-disabled="false">ペア撮影（画像＋日照・環境）</button>
+      <button onclick="addSchedule('growthAuto')" data-disabled="false">時間指定追加</button>
+      <div id="growthAutoScheduleList"></div>
+    </div>
+
+    <!-- 環境計測メニュー（既存） -->
+    <button id="envBtn" data-disabled="false">環境計測</button>
+    <div id="envMenu" class="hidden">
+      <div class="sensor-block">
+        <h3>温湿度気圧センサー</h3>
+        <button id="bmeAutoBtn" data-disabled="false">OFF</button>
+        <span>定期計測</span><br>
+        <input type="number" id="bmeAutoInterval" min="1" value="10"> 分ごと
+        <button id="bmeNowBtn" data-disabled="false">今すぐ計測</button>
+        <button onclick="addSchedule('bmeAuto')" data-disabled="false">時間指定追加</button>
+        <div id="bmeAutoScheduleList"></div>
+      </div>
+      <div class="sensor-block">
+        <h3>水温センサー</h3>
+        <button id="waterAutoBtn" data-disabled="false">OFF</button>
+        <span>定期計測</span><br>
+        <input type="number" id="waterAutoInterval" min="1" value="10"> 分ごと
+        <button id="waterNowBtn" data-disabled="false">今すぐ計測</button>
+        <button onclick="addSchedule('waterAuto')" data-disabled="false">時間指定追加</button>
+        <div id="waterAutoScheduleList"></div>
+      </div>
+      <div class="sensor-block">
+        <h3>日照度センサー</h3>
+        <button id="lightAutoBtn" data-disabled="false">OFF</button>
+        <span>定期計測</span><br>
+        <input type="number" id="lightAutoInterval" min="1" value="10"> 分ごと
+        <button id="lightNowBtn" data-disabled="false">今すぐ計測</button>
+        <button onclick="addSchedule('lightAuto')" data-disabled="false">時間指定追加</button>
+        <div id="lightAutoScheduleList"></div>
+      </div>
+    </div>
+
+    <h2>成長記録（履歴）</h2>
+    <button id="recordBtn" data-disabled="false">履歴を読み込む</button>
+    <button id="downloadHistoryBtn" data-disabled="false">履歴をダウンロード</button>
+    <span id="historyStatus" style="color:green; margin-left:5px;"></span>
+    <table id="historyTable" border="1" style="margin-top:10px; border-collapse:collapse;">
+      <tr><th>時刻</th><th>画像</th><th>データ</th></tr>
+    </table>
+
+    <div style="margin-top:20px;">
+      <button id="backBtn" data-disabled="false">戻る</button>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden">
+    <p>処理中です...</p>
+    <div class="note">※ログインが完了しない場合は、もう一度ボタンを押してください</div>
+  </div>
+
+  <script data-cfasync="false" src="main.js"></script>
+</body>
+</html>
