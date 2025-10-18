@@ -166,7 +166,7 @@ async function createProject() {
     subFolderIds[sub] = sf.result.id;
   }
 
-  // ★ growthAuto に preNoticeMin / padSec を追加（デフォルト: 5分, 60秒）
+  // ★ growthAuto に preNoticeMin / padSec
   const settingsContent = {
     id: idPart,
     name: displayName,
@@ -460,7 +460,7 @@ async function openProject(fileId) {
     document.getElementById(nowBtn).onclick = () => runNow(key);
   });
 
-  // ★ 追加: 事前通知と撮影パッドの入力 → command.json へ反映（growthAuto 配下）
+  // ★ 事前通知と撮影パッド
   const preEl = document.getElementById("growthPreNoticeMin");
   const padEl = document.getElementById("growthPadSec");
   if (preEl) {
@@ -487,7 +487,7 @@ async function openProject(fileId) {
   document.getElementById("downloadHistoryBtn").onclick = downloadHistory;
   document.getElementById("enableNotifyBtn").onclick = enableNotify;
 
-  // ★ 追加: command.json の閲覧＆再読込
+  // ★ command.json の閲覧＆再読込
   const cmdPanel = document.getElementById("commandPanel");
   const cmdPre   = document.getElementById("commandJsonPre");
   const btnShow  = document.getElementById("showCommandBtn");
