@@ -13,7 +13,7 @@ let currentCommandData = null;
 let lastStateForNotify = ""; // 通知用に直近のstateを記憶
 
 // ==== Web Push 追加設定 ====
-const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg"; // ← 手順で作成した公開鍵(base64url)
+const VAPID_PUBLIC_KEY = "BMQPaHWTP-zU0BYOeWXT-bxBjMQbF0rIkuhRgme5L-iAiPl6hYJQhLAqg35cFa51-zC_3IViSkiJUPBSjetokOg";
 const SW_PATH = "sw.js";
 function urlBase64ToUint8Array(b64) {
   const pad = '='.repeat((4 - b64.length % 4) % 4);
@@ -141,7 +141,6 @@ async function createProject() {
   const name = prompt("新しいプロジェクト名を入力してください:");
   if (!name || name.trim() === "") return;
 
-  // 一意ID
   const idPart = Math.floor(1000000000 + Math.random() * 9000000000).toString();
   const displayName = name.trim();
   const fullName = `project_${idPart}_${displayName}`;
@@ -166,7 +165,6 @@ async function createProject() {
     subFolderIds[sub] = sf.result.id;
   }
 
-  // ★ growthAuto に preNoticeMin / padSec
   const settingsContent = {
     id: idPart,
     name: displayName,
@@ -180,11 +178,12 @@ async function createProject() {
   };
   await uploadJsonToDrive("project_settings.json", settingsContent, projectFolderId);
 
+  const tzOffsetMin = -new Date().getTimezoneOffset(); // JSTなら +540
   const initialCommands = {
-    growthAuto: { enabled: false, interval: 10, schedules: [], runNow: false, preNoticeMin: 5, padSec: 60 },
-    bmeAuto:    { enabled: false, interval: 10, schedules: [], runNow: false },
-    waterAuto:  { enabled: false, interval: 10, schedules: [], runNow: false },
-    lightAuto:  { enabled: false, interval: 10, schedules: [], runNow: false }
+    growthAuto: { enabled: false, interval: 10, schedules: [], runNow: false, preNoticeMin: 5, padSec: 60, tzOffsetMin },
+    bmeAuto:    { enabled: false, interval: 10, schedules: [], runNow: false, tzOffsetMin },
+    waterAuto:  { enabled: false, interval: 10, schedules: [], runNow: false, tzOffsetMin },
+    lightAuto:  { enabled: false, interval: 10, schedules: [], runNow: false, tzOffsetMin }
   };
   await uploadJsonToDrive("command.json", initialCommands, projectFolderId);
 
@@ -209,14 +208,16 @@ async function addSchedule(key) {
   if (!currentCommandData || !commandFileId) return alert("コマンド未読込");
   const time = prompt("追加する時間をHH:MMで入力（例 08:30）");
   if (!time || !/^\d{1,2}:\d{2}$/.test(time)) return alert("形式が正しくありません");
+  currentCommandData[key].schedules = currentCommandData[key].schedules || [];
   currentCommandData[key].schedules.push({ time, enabled: true });
   await updateJsonOnDrive(commandFileId, currentCommandData);
   renderSchedules(key);
 }
 function renderSchedules(key) {
   const listEl = document.getElementById(`${key}ScheduleList`);
+  if (!currentCommandData[key]) return;
   listEl.innerHTML = "";
-  currentCommandData[key].schedules.forEach((s, idx) => {
+  (currentCommandData[key].schedules || []).forEach((s, idx) => {
     const item = document.createElement("div");
     item.textContent = `${s.time} `;
     const toggleBtn = document.createElement("button");
@@ -231,21 +232,39 @@ function renderSchedules(key) {
 }
 async function updateCommand(key, field, value) {
   if (!currentCommandData || !commandFileId) return;
+  if (!currentCommandData[key]) currentCommandData[key] = { enabled:false, interval:10, schedules:[], runNow:false };
   currentCommandData[key][field] = value;
   await updateJsonOnDrive(commandFileId, currentCommandData);
 }
 async function runNow(key) {
   if (!currentCommandData || !commandFileId) return;
+  if (!currentCommandData[key]) currentCommandData[key] = { enabled:false, interval:10, schedules:[], runNow:false };
   currentCommandData[key].runNow = true;
   await updateJsonOnDrive(commandFileId, currentCommandData);
-  alert(`${key} を即時実行として送信しました`);
+  alert(`${key} を即時実行として送信しました（撮影は事前通知 → 設定パッド後に行われます）`);
 }
 async function runPairNow() {
   if (!currentCommandData || !commandFileId) return;
   currentCommandData["growthAuto"].runNow = true;
   currentCommandData["lightAuto"].runNow = true;
   await updateJsonOnDrive(commandFileId, currentCommandData);
-  alert("ペア撮影（画像＋日照・環境）を送信しました");
+  alert("ペア撮影（画像＋日照・環境）を送信しました（撮影は事前通知 → 設定パッド後に行われます）");
+}
+
+// ---- 端末タイムゾーンをcommand.jsonへ反映（スケジュールズレ防止） ----
+async function ensureTimezoneIntoCommand() {
+  if (!currentCommandData || !commandFileId) return;
+  const tzOffsetMin = -new Date().getTimezoneOffset(); // JST:+540
+  const keys = ["growthAuto","bmeAuto","waterAuto","lightAuto"];
+  let changed = false;
+  for (const k of keys) {
+    if (!currentCommandData[k]) currentCommandData[k] = { enabled:false, interval:10, schedules:[], runNow:false };
+    if (currentCommandData[k].tzOffsetMin !== tzOffsetMin) {
+      currentCommandData[k].tzOffsetMin = tzOffsetMin;
+      changed = true;
+    }
+  }
+  if (changed) await updateJsonOnDrive(commandFileId, currentCommandData);
 }
 
 // ==================== ステータス表示 ====================
@@ -271,7 +290,6 @@ async function loadStatus() {
     document.getElementById("piLast").innerText = st.last_schedule_tag || st.last_pair_id || "—";
     document.getElementById("piMsg").innerText = st.message || "—";
 
-    // 簡易（ローカル）通知：ブラウザ内だけのNotification
     if (("Notification" in window) && Notification.permission === "granted") {
       if (st.state && st.state !== lastStateForNotify) {
         const body = st.state === "paused_overheat"
@@ -290,7 +308,6 @@ async function enableNotify() {
   try {
     if (!currentProjectId) return alert("プロジェクトを開いてから許可してください");
 
-    // iOSはPWAのみ受信可（ホーム画面に追加が必要）
     const ua = navigator.userAgent || "";
     const isiOS = /iPad|iPhone|iPod/.test(ua);
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -319,12 +336,11 @@ async function enableNotify() {
   }
 }
 
-// ==================== 最新表示・履歴（既存＋α） ====================
+// ==================== 最新表示・履歴 ====================
 async function loadLatestStatus() {
   if (!currentProjectSettings) return;
   document.getElementById("reloadStatus").innerText = "読み込み中...";
   try {
-    // 最新画像
     const picRes = await gapi.client.drive.files.list({
       q: `'${currentProjectSettings.subFolderIds.picture}' in parents and trashed=false`,
       orderBy: "createdTime desc",
@@ -338,7 +354,6 @@ async function loadLatestStatus() {
         `画像時刻: ${new Date(picRes.result.files[0].createdTime).toLocaleString()}`;
     }
 
-    // 環境データ（最新1件）
     const dataRes = await gapi.client.drive.files.list({
       q: `'${currentProjectSettings.subFolderIds.data}' in parents and trashed=false and name contains '.json'`,
       orderBy: "createdTime desc",
@@ -460,7 +475,7 @@ async function openProject(fileId) {
     document.getElementById(nowBtn).onclick = () => runNow(key);
   });
 
-  // ★ 事前通知と撮影パッド
+  // 事前通知と撮影パッド
   const preEl = document.getElementById("growthPreNoticeMin");
   const padEl = document.getElementById("growthPadSec");
   if (preEl) {
@@ -487,7 +502,7 @@ async function openProject(fileId) {
   document.getElementById("downloadHistoryBtn").onclick = downloadHistory;
   document.getElementById("enableNotifyBtn").onclick = enableNotify;
 
-  // ★ command.json の閲覧＆再読込
+  // command.json 閲覧＆再読込
   const cmdPanel = document.getElementById("commandPanel");
   const cmdPre   = document.getElementById("commandJsonPre");
   const btnShow  = document.getElementById("showCommandBtn");
@@ -508,7 +523,6 @@ async function openProject(fileId) {
       await loadCommandFile();
       if (!currentCommandData) return alert("command.json が読み込めませんでした");
       cmdPre.textContent = JSON.stringify(currentCommandData, null, 2);
-      // ついでに UI の値も最新化
       mapping.forEach(({ key, btn, interval }) => {
         const btnEl = document.getElementById(btn);
         if (btnEl) btnEl.textContent = currentCommandData[key]?.enabled ? "ON" : "OFF";
@@ -524,33 +538,14 @@ async function openProject(fileId) {
     btnClose.onclick = () => cmdPanel.classList.add("hidden");
   }
 
+  await ensureTimezoneIntoCommand(); // ★ TZずれ対策を反映
   await loadLatestStatus();
 
   // ステータスの自動更新（60秒ごと）
   setInterval(loadStatus, 60000);
 }
 
-// ==================== ログイン～TOP ====================
-async function handleLogin(retry = false) {
-  document.getElementById("status").innerText = retry ? "再試行中..." : "ログイン中...";
-  document.getElementById("loading").classList.remove("hidden");
-  try {
-    await initGapi();
-    const token = await gisLogin();
-    gapi.client.setToken({ access_token: token });
-    await createPlantAppFolder();
-    document.getElementById("loginScreen").classList.add("hidden");
-    document.getElementById("homeScreen").classList.remove("hidden");
-    await loadProjects();
-  } catch (err) {
-    showError("ログイン処理", err);
-    if (!retry) setTimeout(() => handleLogin(true), 1200);
-  } finally {
-    document.getElementById("loading").classList.add("hidden");
-  }
-}
-
-// ==================== アカウント/プロジェクト管理（既存） ====================
+// ==================== アカウント/プロジェクト管理 ====================
 async function deleteAccount() {
   if (!plantAppFolderId) return alert("PlantAppフォルダが見つかりません。");
   if (!confirm("⚠️ アカウントデータをすべて削除します。本当に実行しますか？")) return;
@@ -625,7 +620,20 @@ window.onload = () => {
     const el = document.getElementById(id); if (!el) return;
     el.addEventListener("click", handler); el.addEventListener("touchstart", handler);
   };
-  bindBtn("loginBtn", () => handleLogin(false));
+  bindBtn("loginBtn", async () => {
+    document.getElementById("status").innerText = "ログイン中...";
+    try {
+      await initGapi();
+      const token = await gisLogin();
+      gapi.client.setToken({ access_token: token });
+      await createPlantAppFolder();
+      document.getElementById("loginScreen").classList.add("hidden");
+      document.getElementById("homeScreen").classList.remove("hidden");
+      await loadProjects();
+    } catch (err) {
+      showError("ログイン処理", err);
+    }
+  });
   bindBtn("createProjectBtn", createProject);
   bindBtn("deleteAccountBtn", deleteAccount);
   bindBtn("backBtn", () => {
